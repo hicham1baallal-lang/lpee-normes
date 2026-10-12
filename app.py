@@ -835,6 +835,78 @@ def _principales(question: str, generaux: list) -> list:
         return [c for c in generaux if est_principale(c)]
 
 
+# --- Recherche ciblée par numéro de norme (ex. « NM EN 12350-2 ») ---
+# La recherche vectorielle seule est mauvaise pour les identifiants : le nom du fichier n'est pas dans le texte
+# embeddé, donc « 12350-2 » ressemble à « 12504-2 » ou « 934-2 ». On repère donc le numéro dans la question,
+# on retrouve le(s) PDF correspondant(s) par leur nom, et on prend leurs extraits les plus proches de la question.
+BONUS_CIBLE = 0.10
+MAX_FICHIERS_CIBLES = 4
+NB_EXTRAITS_CIBLES = 6
+
+
+def _nettoyer_ref(texte: str) -> str:
+    return " " + re.sub(r"[^a-z0-9]+", " ", _sans_accents(texte)).strip() + " "
+
+
+def _refs_dans_question(question: str) -> list:
+    """[(numero, partie|None)] : « NM EN 12350-2 » -> [('12350', '2')]. Ignore les années isolées (2021...)."""
+    refs = []
+    for m in re.finditer(r"(?<!\d)(\d{3,5})(?:\s*[-\u2013\u2011/]\s*(\d{1,2}))?(?!\d)", question):
+        num, partie = m.group(1), m.group(2)
+        if partie is None and len(num) == 4 and 1900 <= int(num) <= 2100:
+            continue
+        refs.append((num, partie))
+    return refs
+
+
+def _fichiers_cibles(question: str) -> list:
+    existants = fichiers_pdf_existants()
+    refs = _refs_dans_question(question)
+    if not existants or not refs:
+        return []
+    trouves = []
+    for chemin in sorted(existants):
+        nom = _nettoyer_ref(chemin.split("/")[-1].rsplit(".", 1)[0])
+        for num, partie in refs:
+            motif = f" {num} {partie} " if partie else f" {num} "
+            if motif in nom:
+                trouves.append(chemin)
+                break
+    return trouves[:MAX_FICHIERS_CIBLES]
+
+
+def _candidats_cibles(question: str) -> list:
+    fichiers = _fichiers_cibles(question)
+    if not fichiers:
+        return []
+    table = st.secrets.get("SUPABASE_TABLE", "documents")
+    sortie = []
+    for chemin in fichiers:
+        lignes = []
+        try:  # 1) extraits du fichier les plus proches de la question
+            res = _rpc("match_documents_prefixe", {
+                "query_embedding": _vecteur_question(question),
+                "match_count": NB_EXTRAITS_CIBLES,
+                "motif": chemin,
+            })
+            lignes = res.data or []
+        except Exception:
+            lignes = []
+        if not lignes:
+            try:  # 2) repli : premières pages du fichier (portée, définitions)
+                r = (supabase.table(table).select("content,metadata")
+                     .eq("metadata->>chemin", chemin).limit(40).execute())
+                lignes = sorted(r.data or [], key=lambda l: (l["metadata"].get("page") or 0))[:NB_EXTRAITS_CIBLES]
+                for l in lignes:
+                    l["similarity"] = 0.80
+            except Exception:
+                lignes = []
+        for l in lignes:
+            l["cible"] = True
+        sortie += lignes
+    return sortie
+
+
 def rechercher_chunks(question: str, seulement_principales: bool = False):
     """Recherche vectorielle en deux niveaux : les normes principales sont cherchées à part (et favorisées),
     puis complétées par le reste de la base (sauf en mode « normes principales uniquement »).
@@ -850,6 +922,8 @@ def rechercher_chunks(question: str, seulement_principales: bool = False):
         candidats += [c for c in principaux
                       if (c["metadata"].get("fichier"), c["metadata"].get("page"), c["content"][:120]) not in deja]
 
+    candidats = _candidats_cibles(question) + candidats  # norme citée par son numéro : toujours dans la course
+
     existants = fichiers_pdf_existants()
     if existants and layout_coherent():
         candidats = [c for c in candidats if not _chemin_norm(c) or _chemin_norm(c) in existants]
@@ -858,7 +932,8 @@ def rechercher_chunks(question: str, seulement_principales: bool = False):
 
     for c in candidats:
         c["principale"] = est_principale(c)
-        c["score"] = c["similarity"] + (BONUS_PRINCIPALE if c["principale"] else 0.0)
+        c["score"] = (c["similarity"] + (BONUS_PRINCIPALE if c["principale"] else 0.0)
+                      + (BONUS_CIBLE if c.get("cible") else 0.0))
     candidats.sort(key=lambda c: c["score"], reverse=True)
 
     meilleur = candidats[0]["score"]
@@ -874,13 +949,13 @@ def rechercher_chunks(question: str, seulement_principales: bool = False):
             break
 
     # Normes principales en premier, puis regroupement par document et page
-    gardes.sort(key=lambda c: (not c["principale"], str(c["metadata"].get("fichier")), c["metadata"].get("page") or 0))
+    gardes.sort(key=lambda c: (not c.get("cible"), not c["principale"], str(c["metadata"].get("fichier")), c["metadata"].get("page") or 0))
     return gardes
 
 
 def construire_prompt(question: str, chunks: list, historique: list) -> str:
     contexte_docs = "\n\n---\n\n".join(
-        f"[Source {i+1} — {'NORME PRINCIPALE' if c.get('principale') else 'document complémentaire'} — "
+        f"[Source {i+1} — {'NORME DEMANDÉE' if c.get('cible') else 'NORME PRINCIPALE' if c.get('principale') else 'document complémentaire'} — "
         f"{c['metadata'].get('fichier')}, page {c['metadata'].get('page')}]\n{c['content']}"
         for i, c in enumerate(chunks)
     )
@@ -898,7 +973,8 @@ RÈGLES DE PRÉCISION (impératives) :
    Ne les arrondis pas, ne les convertis pas.
 4. Si des extraits se contredisent (versions/normes différentes), signale-le et cite chaque source.
 5. Cite chaque affirmation avec (Source X) — fichier et page.
-6. PRIORITÉ AUX NORMES PRINCIPALES : les extraits « NORME PRINCIPALE » font référence. Appuie-toi d'abord sur eux.
+6. Les extraits « NORME DEMANDÉE » proviennent de la norme que l'agent cite par son numéro : traite-les en priorité.
+   PRIORITÉ AUX NORMES PRINCIPALES : les extraits « NORME PRINCIPALE » font référence. Appuie-toi d'abord sur eux.
    N'utilise un « document complémentaire » que pour compléter, et précise-le (« d'après un document complémentaire »).
    En cas de divergence, la norme principale prévaut ; signale l'écart. Si aucun extrait de norme principale
    ne traite la question, dis-le dans ta première phrase.
