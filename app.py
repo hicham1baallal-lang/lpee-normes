@@ -872,7 +872,7 @@ def indexer_pdf(chemin: str, table: str, modele, repo: str, token: str, suivi=No
     return len(lignes)
 
 
-SEUIL_BASE_MO = 450            # au-delà, l'indexation s'arrête (limite gratuite Supabase : 500 Mo)
+SEUIL_BASE_MO = 430            # au-delà, l'indexation s'arrête (limite gratuite Supabase : 500 Mo)
 MAX_FICHIERS_PAR_PASSE = 5     # indexation automatique : au plus 5 PDF par passage (le CPU Streamlit Cloud est limité)
 MAX_FICHIERS_MANUEL = 8        # bouton « Synchroniser maintenant » : au plus 8 PDF par clic (secret MAX_FICHIERS_SYNCHRO pour changer)
 
