@@ -186,30 +186,50 @@ if not st.session_state.authentifie and not st.session_state.get("deconnexion_vo
 
 # --- ÉCRAN DE CONNEXION ---
 if not st.session_state.authentifie:
-    st.title("🔐 Connexion — Plateforme LPEE")
-    st.markdown("Veuillez vous identifier pour accéder aux normes et fascicules techniques.")
-    
-    with st.form("form_login"):
-        username_input = st.text_input("Nom d'utilisateur").strip().lower()
-        password_input = st.text_input("Mot de passe", type="password")
-        submit_login = st.form_submit_button("Se connecter")
-        
-        if submit_login:
-            users = charger_utilisateurs()
-            if users is None:
-                st.error("Service d'authentification momentanément indisponible. Réessayez dans un instant.")
-            elif username_input in users and verifier_mdp(password_input, users[username_input]["password"]):
-                st.session_state.utilisateurs = users
-                st.session_state.authentifie = True
-                st.session_state.username_courant = username_input
-                st.session_state.nom_utilisateur = users[username_input]["nom"]
-                st.session_state.role_utilisateur = users[username_input]["role"]
-                st.session_state.pop("deconnexion_volontaire", None)
-                poser_cookie(controller, username_input, users[username_input]["password"])
-                time.sleep(1)  # laisse le navigateur enregistrer le cookie
-                st.rerun()
-            else:
-                st.error("Nom d'utilisateur ou mot de passe incorrect.")
+    # Image de la page de connexion (même dossier que app.py ; tolère espaces/underscores et majuscules)
+    _dossier = os.path.dirname(os.path.abspath(__file__))
+    _image_garde = None
+    for _nom in ("Page de garde Veille normative.jpg", "Page_de_garde_Veille_normative.jpg",
+                 "Page de garde Veille normative.jpeg", "Page de garde Veille normative.png"):
+        for _base in (_dossier, os.getcwd()):
+            if os.path.exists(os.path.join(_base, _nom)):
+                _image_garde = os.path.join(_base, _nom)
+                break
+        if _image_garde:
+            break
+
+    if _image_garde:
+        col_image, col_form = st.columns([1.1, 1], gap="large", vertical_alignment="center")
+        with col_image:
+            st.image(_image_garde, use_container_width=True)
+    else:
+        col_form = st.container()
+
+    with col_form:
+        st.title("🔐 Connexion — Plateforme LPEE")
+        st.markdown("Veuillez vous identifier pour accéder aux normes et fascicules techniques.")
+
+        with st.form("form_login"):
+            username_input = st.text_input("Nom d'utilisateur").strip().lower()
+            password_input = st.text_input("Mot de passe", type="password")
+            submit_login = st.form_submit_button("Se connecter")
+
+            if submit_login:
+                users = charger_utilisateurs()
+                if users is None:
+                    st.error("Service d'authentification momentanément indisponible. Réessayez dans un instant.")
+                elif username_input in users and verifier_mdp(password_input, users[username_input]["password"]):
+                    st.session_state.utilisateurs = users
+                    st.session_state.authentifie = True
+                    st.session_state.username_courant = username_input
+                    st.session_state.nom_utilisateur = users[username_input]["nom"]
+                    st.session_state.role_utilisateur = users[username_input]["role"]
+                    st.session_state.pop("deconnexion_volontaire", None)
+                    poser_cookie(controller, username_input, users[username_input]["password"])
+                    time.sleep(1)  # laisse le navigateur enregistrer le cookie
+                    st.rerun()
+                else:
+                    st.error("Nom d'utilisateur ou mot de passe incorrect.")
     st.stop()
 
 
