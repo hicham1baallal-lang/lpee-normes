@@ -379,10 +379,22 @@ CSS_IA = """
 /* Barre latérale : liseré néon */
 [data-testid="stSidebar"] {border-right:1px solid rgba(124,58,237,.35);box-shadow:4px 0 22px rgba(99,102,241,.15);}
 
-/* Indicateur de réflexion (spinner) : texte avec reflet qui défile */
-[data-testid="stSpinner"] {background:linear-gradient(90deg,currentColor 35%,#7c3aed 50%,currentColor 65%);
-  background-size:200% 100%;-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;
-  animation:ia-reflet 2s linear infinite;}
+/* Indicateur « l'IA réfléchit » (toujours visible pendant la recherche et la rédaction) */
+@keyframes ia-onde  {0%{transform:scale(.6);opacity:.9}100%{transform:scale(2.1);opacity:0}}
+@keyframes ia-rail  {0%{transform:translateX(-100%)}100%{transform:translateX(300%)}}
+@keyframes ia-points{0%,20%{content:"."}40%{content:".."}60%,100%{content:"..."}}
+.ia-penser {display:flex;align-items:center;gap:16px;padding:10px 4px;}
+.ia-penser .orbe {position:relative;flex:none;width:34px;height:34px;border-radius:50%;
+  background:radial-gradient(circle at 30% 30%,#a78bfa,#4f46e5);box-shadow:0 0 16px rgba(99,102,241,.8);}
+.ia-penser .orbe::before,.ia-penser .orbe::after {content:"";position:absolute;inset:0;border-radius:50%;
+  border:2px solid #22d3ee;animation:ia-onde 1.8s ease-out infinite;}
+.ia-penser .orbe::after {animation-delay:.9s;border-color:#a78bfa;}
+.ia-penser .titre {font-weight:700;}
+.ia-penser .titre::after {content:"...";animation:ia-points 1.4s steps(1) infinite;display:inline-block;width:1.2em;}
+.ia-penser small {display:block;opacity:.7;margin:2px 0 7px;}
+.ia-penser .rail {width:min(380px,60vw);height:5px;border-radius:9px;background:rgba(124,58,237,.15);overflow:hidden;}
+.ia-penser .rail i {display:block;width:33%;height:100%;border-radius:9px;
+  background:linear-gradient(90deg,#22d3ee,#7c3aed,#f472b6);box-shadow:0 0 10px #7c3aed;animation:ia-rail 1.3s linear infinite;}
 
 /* ================= BARRE LATÉRALE « IA » ================= */
 @keyframes ia-tourne  {to{transform:rotate(360deg)}}
@@ -476,7 +488,7 @@ CSS_IA = """
 @media (prefers-reduced-motion: reduce){
   [data-testid="stSidebar"] *,[data-testid="stSidebar"] *::before,[data-testid="stSidebar"] *::after,
   .carte-ia *,.carte-ia::after,[data-testid="stSidebar"] > div:first-child{animation:none !important;}
-  .stApp h1,.badge-ia .point,[data-testid="stChatInput"],[data-testid="stSpinner"],[data-testid="stChatMessage"],
+  .stApp h1,.badge-ia .point,[data-testid="stChatInput"],[data-testid="stChatMessage"],.ia-penser *,.ia-penser *::before,.ia-penser *::after,
   .stApp[data-teststate="running"]::before{animation:none !important;}
 }
 </style>
@@ -552,8 +564,16 @@ NB_MAX_RESULTATS = 20      # maximum envoyé au modèle (prompt plus court = ré
 ECART_PERTINENCE = 0.08    # on écarte les extraits trop éloignés du meilleur score
 NB_ECHANGES_CONTEXTE = 4
 
-client = genai.Client(api_key=st.secrets["GOOGLE_API_KEY"])
-supabase = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
+try:  # délai maximal par appel Gemini : évite une attente de plusieurs minutes si le service ne répond plus
+    client = genai.Client(api_key=st.secrets["GOOGLE_API_KEY"], http_options=types.HttpOptions(timeout=120_000))
+except Exception:
+    client = genai.Client(api_key=st.secrets["GOOGLE_API_KEY"])
+try:  # idem pour Supabase : une recherche qui n'aboutit pas en 30 s affiche une erreur au lieu de rester bloquée
+    from supabase.lib.client_options import ClientOptions
+    supabase = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"],
+                             options=ClientOptions(postgrest_client_timeout=30))
+except Exception:
+    supabase = create_client(st.secrets["SUPABASE_URL"], st.secrets["SUPABASE_KEY"])
 
 
 def _chemin_historique(username: str) -> str:
@@ -1226,7 +1246,7 @@ def _candidats_cibles(question: str) -> list:
         if not lignes:
             try:  # 2) repli : premières pages du fichier (portée, définitions)
                 r = (supabase.table(table).select("content,metadata")
-                     .eq("metadata->>chemin", chemin).limit(40).execute())
+                     .eq("fichier", chemin).limit(40).execute())  # colonne « fichier » = chemin complet, déjà indexée
                 lignes = sorted(r.data or [], key=lambda l: (l["metadata"].get("page") or 0))[:NB_EXTRAITS_CIBLES]
                 for l in lignes:
                     l["similarity"] = 0.80
@@ -1772,6 +1792,28 @@ if st.session_state.get("erreur_historique"):
 lancer_synchro_auto()
 
 
+def indicateur_ia(zone, titre: str, detail: str):
+    """Affiche un indicateur animé bien visible (ou un simple message si les effets sont désactivés)."""
+    if EFFETS_IA:
+        zone.markdown(
+            f'''<div class="ia-penser"><span class="orbe"></span><div><div class="titre">{titre}</div>
+<small>{detail}</small><div class="rail"><i></i></div></div></div>''', unsafe_allow_html=True)
+    else:
+        zone.caption(f"⏳ {titre} — {detail}")
+
+
+def flux_avec_indicateur(flux, zone):
+    """Fait disparaître l'indicateur dès que le premier mot de la réponse arrive."""
+    attente = True
+    for morceau in flux:
+        if attente:
+            zone.empty()
+            attente = False
+        yield morceau
+    if attente:
+        zone.empty()
+
+
 # --- Interface Principale ---
 if EFFETS_IA:
     if st.session_state.pop("anim_ia", False):
@@ -1818,10 +1860,12 @@ if question:
     with st.chat_message("assistant"):
         t0 = time.time()
         try:
-            with st.spinner("🧠 L'IA analyse les documents indexés..."):
-                question_recherche = reformuler_question(question, historique[:-1])
-                chunks = rechercher_chunks(question_recherche, seulement_principales)
+            zone_ia = st.empty()
+            indicateur_ia(zone_ia, "L'IA analyse les documents", "Recherche vectorielle dans les normes indexées")
+            question_recherche = reformuler_question(question, historique[:-1])
+            chunks = rechercher_chunks(question_recherche, seulement_principales)
         except Exception as e:
+            zone_ia.empty()
             historique.pop()  # la question n'a pas reçu de réponse : on ne la garde pas dans l'historique
             detail = str(e)
             st.error("⚠️ La recherche dans la base a échoué. Réessayez dans un instant.")
@@ -1839,6 +1883,7 @@ if question:
         t_recherche = time.time() - t0
 
         if not chunks:
+            zone_ia.empty()
             reponse = (
                 "Aucun passage trouvé dans les **normes principales** pour cette question. "
                 "Décochez « Chercher uniquement dans les normes principales » pour élargir la recherche."
@@ -1851,7 +1896,8 @@ if question:
         else:
             prompt = construire_prompt(question, chunks, historique[:-1])
             t1 = time.time()
-            reponse = st.write_stream(flux_reponse(prompt))  # affichage progressif
+            indicateur_ia(zone_ia, "L'IA rédige la réponse", f"{len(chunks)} extraits sélectionnés · analyse en cours")
+            reponse = st.write_stream(flux_avec_indicateur(flux_reponse(prompt), zone_ia))  # affichage progressif
             t_generation = time.time() - t1
             afficher_sources(chunks, prefixe_cle=f"{st.session_state.session_courante}_msg{len(historique)}")
             st.caption(f"⏱️ Recherche : {t_recherche:.1f} s · Génération de la réponse : {t_generation:.1f} s")
