@@ -1127,10 +1127,19 @@ def _vecteur_question(question: str):
 
 @st.cache_data(ttl=3600, max_entries=300, show_spinner=False)
 def _candidats(question: str):
-    res = _rpc("match_documents", {
-        "query_embedding": _vecteur_question(question),
-        "match_count": NB_CANDIDATS,
-    })
+    try:
+        res = _rpc("match_documents", {
+            "query_embedding": _vecteur_question(question),
+            "match_count": NB_CANDIDATS,
+        })
+    except RuntimeError as e:
+        if "57014" not in str(e):
+            raise
+        time.sleep(2)  # délai Supabase dépassé : 2e essai plus léger (moins de candidats = recherche plus courte)
+        res = _rpc("match_documents", {
+            "query_embedding": _vecteur_question(question),
+            "match_count": max(10, NB_CANDIDATS // 3),
+        })
     if not res.data:
         # Une exception n'est PAS mise en cache par Streamlit (contrairement à une liste vide gardée 1 h)
         raise LookupError("La fonction match_documents n'a renvoyé aucun extrait : la table est vide, "
