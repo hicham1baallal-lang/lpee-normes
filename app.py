@@ -25,6 +25,7 @@ import time
 import unicodedata
 
 import streamlit as st
+import streamlit.components.v1 as components
 from datetime import datetime, timedelta
 from streamlit_cookies_controller import CookieController
 from supabase import create_client
@@ -225,6 +226,7 @@ if not st.session_state.authentifie:
                     st.session_state.nom_utilisateur = users[username_input]["nom"]
                     st.session_state.role_utilisateur = users[username_input]["role"]
                     st.session_state.pop("deconnexion_volontaire", None)
+                    st.session_state.anim_ia = True  # animation d'accueil « IA » au premier affichage
                     poser_cookie(controller, username_input, users[username_input]["password"])
                     time.sleep(1)  # laisse le navigateur enregistrer le cookie
                     st.rerun()
@@ -1447,8 +1449,101 @@ if st.session_state.get("erreur_historique"):
 
 lancer_synchro_auto()
 
+
+# ==========================================
+# EFFETS « IA » (animation d'accueil + style permanent)
+# ==========================================
+def animation_accueil_ia(nom: str):
+    """Réseau de neurones animé + texte qui s'écrit, affiché ~3 s juste après la connexion."""
+    texte = json.dumps(f"Bienvenue, {nom}")
+    html_anim = """
+<div style="position:relative;width:100%;height:260px;border-radius:16px;overflow:hidden;
+            background:radial-gradient(circle at 30% 20%,#12307a 0%,#0a1633 55%,#050a1a 100%);">
+  <canvas id="c" style="position:absolute;inset:0;width:100%;height:100%"></canvas>
+  <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
+              font-family:'Source Sans Pro',Segoe UI,Arial,sans-serif;color:#e8f0ff;text-align:center;">
+    <div id="l1" style="font-size:13px;letter-spacing:3px;color:#6ee7ff;text-transform:uppercase;min-height:18px"></div>
+    <div id="l2" style="font-size:30px;font-weight:700;margin-top:8px;min-height:40px;
+                        text-shadow:0 0 18px rgba(110,231,255,.55)"></div>
+  </div>
+</div>
+<script>
+const cv=document.getElementById('c'),ctx=cv.getContext('2d');
+const reduit=window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+function taille(){cv.width=cv.clientWidth*devicePixelRatio;cv.height=cv.clientHeight*devicePixelRatio;}
+taille();
+const W=()=>cv.width,H=()=>cv.height,N=48;
+const pts=Array.from({length:N},()=>({x:Math.random()*W(),y:Math.random()*H(),
+  vx:(Math.random()-.5)*.8*devicePixelRatio,vy:(Math.random()-.5)*.8*devicePixelRatio,r:(1.2+Math.random()*1.8)*devicePixelRatio}));
+let t=0;
+function boucle(){
+  ctx.clearRect(0,0,W(),H());t+=.02;
+  for(const p of pts){ if(!reduit){p.x+=p.vx;p.y+=p.vy;} if(p.x<0||p.x>W())p.vx*=-1; if(p.y<0||p.y>H())p.vy*=-1; }
+  const d=130*devicePixelRatio;
+  for(let i=0;i<N;i++)for(let j=i+1;j<N;j++){
+    const dx=pts[i].x-pts[j].x,dy=pts[i].y-pts[j].y,dist=Math.hypot(dx,dy);
+    if(dist<d){ctx.strokeStyle='rgba(110,231,255,'+(0.35*(1-dist/d))+')';ctx.lineWidth=devicePixelRatio;
+      ctx.beginPath();ctx.moveTo(pts[i].x,pts[i].y);ctx.lineTo(pts[j].x,pts[j].y);ctx.stroke();}
+  }
+  pts.forEach((p,i)=>{const a=.6+.4*Math.sin(t*3+i);ctx.fillStyle='rgba(140,200,255,'+a+')';
+    ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,6.283);ctx.fill();});
+  requestAnimationFrame(boucle);
+}
+boucle();
+function ecrire(id,txt,delai,fin){let i=0;const el=document.getElementById(id);
+  const iv=setInterval(()=>{el.textContent=txt.slice(0,++i)+(i<txt.length?'▌':'');
+    if(i>=txt.length){clearInterval(iv);fin&&setTimeout(fin,150);}},delai);}
+ecrire('l1',"Initialisation de l'assistant IA...",28,()=>ecrire('l2',__TEXTE__,45));
+</script>
+""".replace("__TEXTE__", texte)
+    components.html(html_anim, height=270)
+
+
+CSS_IA = """
+<style>
+@keyframes ia-degrade {0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}}
+@keyframes ia-pouls  {0%,100%{box-shadow:0 0 0 0 rgba(34,197,94,.65)}70%{box-shadow:0 0 0 9px rgba(34,197,94,0)}}
+@keyframes ia-halo   {0%,100%{box-shadow:0 0 0 1px rgba(59,130,246,.35),0 0 10px rgba(59,130,246,.15)}
+                      50%{box-shadow:0 0 0 1px rgba(139,92,246,.7),0 0 20px rgba(139,92,246,.35)}}
+@keyframes ia-reflet {0%{background-position:-200% 0}100%{background-position:200% 0}}
+
+/* Titre principal : dégradé animé */
+.stApp h1 {background:linear-gradient(90deg,#1d4ed8,#7c3aed,#06b6d4,#1d4ed8);background-size:300% 100%;
+  -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;
+  animation:ia-degrade 8s ease infinite;}
+
+/* Pastille « IA active » */
+.badge-ia {display:inline-flex;align-items:center;gap:8px;padding:4px 14px;border-radius:999px;font-size:.85rem;
+  font-weight:600;color:#0f172a;background:linear-gradient(90deg,#e0f2fe,#ede9fe);border:1px solid rgba(124,58,237,.35);}
+.badge-ia .point {width:9px;height:9px;border-radius:50%;background:#22c55e;animation:ia-pouls 1.8s infinite;}
+
+/* Zone de saisie : halo lumineux */
+[data-testid="stChatInput"] {border-radius:14px;animation:ia-halo 3.5s ease-in-out infinite;}
+
+/* Avatar de l'assistant */
+[data-testid="stChatMessageAvatarAssistant"] {box-shadow:0 0 12px rgba(124,58,237,.55);}
+
+/* Indicateur de réflexion (spinner) : texte avec reflet qui défile */
+[data-testid="stSpinner"] {background:linear-gradient(90deg,currentColor 35%,#7c3aed 50%,currentColor 65%);
+  background-size:200% 100%;-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;
+  animation:ia-reflet 2s linear infinite;}
+
+@media (prefers-reduced-motion: reduce){
+  .stApp h1,.badge-ia .point,[data-testid="stChatInput"],[data-testid="stSpinner"]{animation:none !important;}
+}
+</style>
+"""
+
 # --- Interface Principale ---
+if st.session_state.pop("anim_ia", False):
+    _zone_anim = st.empty()
+    with _zone_anim.container():
+        animation_accueil_ia(st.session_state.nom_utilisateur)
+    time.sleep(3.6)
+    _zone_anim.empty()
+st.markdown(CSS_IA, unsafe_allow_html=True)
 st.title("📚 Recherche des normes et fascicules techniques — LPEE")
+st.markdown('<span class="badge-ia"><span class="point"></span>Assistant IA en ligne</span>', unsafe_allow_html=True)
 st.subheader(f"👋 Bonjour {st.session_state.nom_utilisateur}")
 st.caption(f"Session active : **{st.session_state.session_courante}** — Posez une question, puis enchaînez des questions de suivi si besoin.")
 
@@ -1481,7 +1576,7 @@ if question:
     with st.chat_message("assistant"):
         t0 = time.time()
         try:
-            with st.spinner("Recherche dans les documents indexés..."):
+            with st.spinner("🧠 L'IA analyse les documents indexés..."):
                 question_recherche = reformuler_question(question, historique[:-1])
                 chunks = rechercher_chunks(question_recherche, seulement_principales)
         except Exception as e:
