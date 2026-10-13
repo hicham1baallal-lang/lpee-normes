@@ -185,8 +185,216 @@ if not st.session_state.authentifie and not st.session_state.get("deconnexion_vo
             st.session_state.role_utilisateur = _users[_login]["role"]
             st.rerun()
 
+# ==========================================
+# EFFETS « IA » (animation d'accueil, fond interactif, style néon) — désactivables : secret EFFETS_IA = "false"
+# ==========================================
+EFFETS_IA = str(st.secrets.get("EFFETS_IA", "true")).strip().lower() != "false"
+
+JS_FOND_IA = r"""
+(function(){
+  if (window.__iaFond || window.innerWidth < 700) return;
+  window.__iaFond = true;
+  var c = document.createElement('canvas'); c.id = 'ia-fond';
+  c.style.cssText = 'position:fixed;inset:0;width:100vw;height:100vh;pointer-events:none;z-index:1;opacity:.5';
+  document.body.appendChild(c);
+  var ctx = c.getContext('2d'), dpr = Math.min(window.devicePixelRatio || 1, 2), W, H, mouse = {x:-999, y:-999};
+  function size(){ W = c.width = innerWidth*dpr; H = c.height = innerHeight*dpr; }
+  size(); addEventListener('resize', size);
+  addEventListener('mousemove', function(e){ mouse.x = e.clientX*dpr; mouse.y = e.clientY*dpr; });
+  var N = 55, pts = [];
+  for (var i=0;i<N;i++) pts.push({x:Math.random()*W, y:Math.random()*H, vx:(Math.random()-.5)*.45*dpr, vy:(Math.random()-.5)*.45*dpr});
+  var reduit = matchMedia('(prefers-reduced-motion: reduce)').matches;
+  function loop(){
+    if (!document.hidden){
+      ctx.clearRect(0,0,W,H);
+      var d = 150*dpr;
+      for (var i=0;i<N;i++){
+        var p = pts[i];
+        if (!reduit){ p.x += p.vx; p.y += p.vy; }
+        if (p.x<0||p.x>W) p.vx*=-1; if (p.y<0||p.y>H) p.vy*=-1;
+        var mx = p.x-mouse.x, my = p.y-mouse.y, md = Math.hypot(mx,my);
+        if (md < 120*dpr && md > 0){ p.x += mx/md*1.4*dpr; p.y += my/md*1.4*dpr; }
+        for (var j=i+1;j<N;j++){
+          var q = pts[j], dist = Math.hypot(p.x-q.x, p.y-q.y);
+          if (dist < d){ ctx.strokeStyle = 'rgba(99,102,241,'+(0.30*(1-dist/d))+')'; ctx.lineWidth = dpr;
+            ctx.beginPath(); ctx.moveTo(p.x,p.y); ctx.lineTo(q.x,q.y); ctx.stroke(); }
+        }
+        if (md < 200*dpr){ ctx.strokeStyle = 'rgba(6,182,212,'+(0.5*(1-md/(200*dpr)))+')'; ctx.lineWidth = dpr;
+          ctx.beginPath(); ctx.moveTo(p.x,p.y); ctx.lineTo(mouse.x,mouse.y); ctx.stroke(); }
+        ctx.fillStyle = 'rgba(124,58,237,.75)'; ctx.beginPath(); ctx.arc(p.x,p.y,1.8*dpr,0,6.283); ctx.fill();
+      }
+    }
+    requestAnimationFrame(loop);
+  }
+  loop();
+})();
+"""
+
+
+def injecter_fond_ia():
+    """Réseau de neurones interactif en fond de page (suit la souris). Injecté une seule fois dans la page."""
+    if not EFFETS_IA:
+        return
+    code = json.dumps(JS_FOND_IA)
+    components.html(
+        "<script>try{var d=window.parent.document;if(!d.getElementById('ia-fond-script')){"
+        "var s=d.createElement('script');s.id='ia-fond-script';s.textContent=" + code + ";d.head.appendChild(s);}}"
+        "catch(e){}</script>", height=0)
+
+
+def animation_accueil_ia(nom: str, nb: int | None):
+    """Écran d'accueil « IA » (~4,5 s) : pluie binaire, réseau neuronal, anneaux HUD, titre glitch, étapes de démarrage."""
+    nom_js = json.dumps(str(nom).upper())
+    etapes = ["Connexion sécurisée établie",
+              "Chargement du modèle de langage",
+              "Activation de la base vectorielle",
+              f"{nb:,} extraits normatifs prêts".replace(",", " ") if nb else "Normes et fascicules prêts"]
+    html_anim = r"""
+<style>
+ *{box-sizing:border-box} body{margin:0}
+ #sc{position:relative;width:100%;height:340px;border-radius:18px;overflow:hidden;color:#e8f0ff;
+     font-family:'Source Sans Pro','Segoe UI',Arial,sans-serif;
+     background:radial-gradient(circle at 25% 15%,#16358a 0%,#0a1633 52%,#04081a 100%);
+     box-shadow:0 0 0 1px rgba(110,231,255,.35),0 0 40px rgba(99,102,241,.45) inset;animation:ent .5s ease-out}
+ @keyframes ent{from{opacity:0;transform:scale(.97)}to{opacity:1;transform:none}}
+ canvas{position:absolute;inset:0;width:100%;height:100%}
+ #scan{position:absolute;left:0;right:0;height:90px;top:-90px;pointer-events:none;
+       background:linear-gradient(180deg,transparent,rgba(110,231,255,.18),transparent);animation:sw 2.4s linear infinite}
+ @keyframes sw{to{top:340px}}
+ #cont{position:absolute;inset:0;display:flex;align-items:center;justify-content:center;gap:42px;padding:0 24px}
+ #hud{position:relative;width:132px;height:132px;flex:none}
+ .ring{position:absolute;inset:0;border-radius:50%;border:2px dashed rgba(110,231,255,.8);animation:rot 6s linear infinite}
+ .ring.r2{inset:14px;border:2px solid transparent;border-top-color:#a78bfa;border-bottom-color:#22d3ee;animation:rot 2.2s linear infinite reverse}
+ .ring.r3{inset:28px;border:1px dotted rgba(255,255,255,.55);animation:rot 9s linear infinite}
+ @keyframes rot{to{transform:rotate(360deg)}}
+ #core{position:absolute;inset:42px;border-radius:50%;display:flex;align-items:center;justify-content:center;
+       font-weight:800;font-size:22px;letter-spacing:1px;color:#fff;
+       background:radial-gradient(circle,#6366f1,#1d4ed8 70%);animation:pl 1.4s ease-in-out infinite;
+       box-shadow:0 0 25px #6366f1,0 0 60px rgba(34,211,238,.6)}
+ @keyframes pl{50%{transform:scale(1.12);box-shadow:0 0 35px #a78bfa,0 0 85px rgba(34,211,238,.9)}}
+ #txt{min-width:300px;max-width:430px}
+ #k{font-size:12px;letter-spacing:4px;color:#6ee7ff;text-transform:uppercase}
+ .gl{position:relative;font-size:34px;font-weight:800;line-height:1.1;margin:6px 0 14px;color:#fff;
+     text-shadow:0 0 18px rgba(110,231,255,.6);word-break:break-word}
+ .gl::before,.gl::after{content:attr(data-t);position:absolute;left:0;top:0;width:100%;overflow:hidden}
+ .gl::before{color:#22d3ee;animation:g1 2.2s infinite steps(1);text-shadow:none}
+ .gl::after{color:#f472b6;animation:g2 2.2s infinite steps(1);text-shadow:none}
+ @keyframes g1{0%,86%,100%{clip-path:inset(0 0 100% 0);transform:none}88%{clip-path:inset(15% 0 55% 0);transform:translate(-4px,0)}94%{clip-path:inset(60% 0 10% 0);transform:translate(3px,0)}}
+ @keyframes g2{0%,84%,100%{clip-path:inset(0 0 100% 0);transform:none}86%{clip-path:inset(55% 0 20% 0);transform:translate(4px,0)}92%{clip-path:inset(10% 0 70% 0);transform:translate(-3px,0)}}
+ .st{font-family:Consolas,'Courier New',monospace;font-size:13px;color:#b6c8ff;opacity:0;transform:translateX(-10px);
+     transition:all .35s;margin:3px 0}
+ .st.on{opacity:1;transform:none}.st b{color:#4ade80;margin-right:8px}
+ #bar{height:5px;border-radius:9px;background:rgba(255,255,255,.12);margin-top:12px;overflow:hidden}
+ #bar i{display:block;height:100%;width:0;background:linear-gradient(90deg,#22d3ee,#a78bfa,#f472b6);
+        box-shadow:0 0 12px #22d3ee;transition:width .4s}
+ @media(max-width:560px){#hud{display:none}.gl{font-size:24px}}
+</style>
+<div id="sc">
+ <canvas id="cv"></canvas><div id="scan"></div>
+ <div id="cont">
+  <div id="hud"><div class="ring"></div><div class="ring r2"></div><div class="ring r3"></div><div id="core">IA</div></div>
+  <div id="txt">
+   <div id="k">Initialisation de l'assistant IA</div>
+   <div class="gl" id="t" data-t=""></div>
+   <div id="lst"></div>
+   <div id="bar"><i id="pg"></i></div>
+  </div>
+ </div>
+</div>
+<script>
+const NOM=__NOM__, ETAPES=__ETAPES__, cv=document.getElementById('cv'), ctx=cv.getContext('2d');
+const dpr=Math.min(devicePixelRatio||1,2), reduit=matchMedia('(prefers-reduced-motion: reduce)').matches;
+cv.width=cv.clientWidth*dpr; cv.height=cv.clientHeight*dpr;
+const W=cv.width,H=cv.height, col=Math.floor(W/(14*dpr)), gouttes=Array.from({length:col},()=>Math.random()*H);
+const pts=Array.from({length:42},()=>({x:Math.random()*W,y:Math.random()*H,vx:(Math.random()-.5)*dpr,vy:(Math.random()-.5)*dpr}));
+function dessiner(){
+  ctx.fillStyle='rgba(4,8,26,.16)'; ctx.fillRect(0,0,W,H);
+  ctx.font=(12*dpr)+'px Consolas,monospace';
+  for(let i=0;i<col;i++){
+    ctx.fillStyle='rgba(34,211,238,.45)'; ctx.fillText(Math.random()>.5?'1':'0', i*14*dpr, gouttes[i]);
+    gouttes[i]+= (reduit?0:14*dpr*.6); if(gouttes[i]>H && Math.random()>.97) gouttes[i]=0; else if(gouttes[i]>H+200) gouttes[i]=0;
+  }
+  const d=120*dpr;
+  for(const p of pts){ if(!reduit){p.x+=p.vx;p.y+=p.vy;} if(p.x<0||p.x>W)p.vx*=-1; if(p.y<0||p.y>H)p.vy*=-1; }
+  for(let i=0;i<pts.length;i++){ for(let j=i+1;j<pts.length;j++){
+    const dist=Math.hypot(pts[i].x-pts[j].x,pts[i].y-pts[j].y);
+    if(dist<d){ctx.strokeStyle='rgba(167,139,250,'+(0.5*(1-dist/d))+')';ctx.lineWidth=dpr;ctx.beginPath();
+      ctx.moveTo(pts[i].x,pts[i].y);ctx.lineTo(pts[j].x,pts[j].y);ctx.stroke();}}
+    ctx.fillStyle='#e0f2fe';ctx.beginPath();ctx.arc(pts[i].x,pts[i].y,2*dpr,0,6.283);ctx.fill(); }
+  requestAnimationFrame(dessiner);
+}
+dessiner();
+// titre « glitch » écrit lettre par lettre
+const T=document.getElementById('t'), full='BIENVENUE, '+NOM; let i=0;
+const iv=setInterval(()=>{ i++; T.textContent=full.slice(0,i); T.setAttribute('data-t',full.slice(0,i)); if(i>=full.length)clearInterval(iv); },55);
+// étapes de démarrage + barre de progression
+const L=document.getElementById('lst'), pg=document.getElementById('pg');
+ETAPES.forEach((e,k)=>{ setTimeout(()=>{ const d=document.createElement('div'); d.className='st'; d.innerHTML='<b>✓</b>'+e;
+  L.appendChild(d); requestAnimationFrame(()=>d.classList.add('on')); pg.style.width=((k+1)/ETAPES.length*100)+'%'; },700+k*650); });
+</script>
+""".replace("__NOM__", nom_js).replace("__ETAPES__", json.dumps(etapes))
+    components.html(html_anim, height=350)
+
+
+CSS_IA = """
+<style>
+@keyframes ia-degrade {0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}}
+@keyframes ia-pouls  {0%,100%{box-shadow:0 0 0 0 rgba(34,197,94,.65)}70%{box-shadow:0 0 0 9px rgba(34,197,94,0)}}
+@keyframes ia-halo   {0%,100%{box-shadow:0 0 0 1px rgba(59,130,246,.35),0 0 10px rgba(59,130,246,.15)}
+                      50%{box-shadow:0 0 0 1px rgba(139,92,246,.75),0 0 24px rgba(139,92,246,.4)}}
+@keyframes ia-reflet {0%{background-position:-200% 0}100%{background-position:200% 0}}
+@keyframes ia-entree {from{opacity:0;transform:translateY(14px)}to{opacity:1;transform:none}}
+@keyframes ia-barre  {0%{transform:translateX(-100%)}100%{transform:translateX(100%)}}
+
+/* Titre principal : dégradé animé */
+.stApp h1 {background:linear-gradient(90deg,#1d4ed8,#7c3aed,#06b6d4,#1d4ed8);background-size:300% 100%;
+  -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;
+  animation:ia-degrade 8s ease infinite;}
+
+/* Pastille « IA active » */
+.badge-ia {display:inline-flex;align-items:center;gap:8px;padding:4px 14px;border-radius:999px;font-size:.85rem;
+  font-weight:600;color:#0f172a;background:linear-gradient(90deg,#e0f2fe,#ede9fe);border:1px solid rgba(124,58,237,.35);}
+.badge-ia .point {width:9px;height:9px;border-radius:50%;background:#22c55e;animation:ia-pouls 1.8s infinite;}
+
+/* Barre « l'IA travaille » en haut de page pendant tout calcul */
+.stApp[data-teststate="running"]::before {content:"";position:fixed;top:0;left:0;right:0;height:3px;z-index:999999;
+  background:linear-gradient(90deg,transparent,#22d3ee,#7c3aed,#f472b6,transparent);
+  box-shadow:0 0 14px #7c3aed;animation:ia-barre 1.1s linear infinite;}
+
+/* Zone de saisie : halo lumineux */
+[data-testid="stChatInput"] {border-radius:14px;animation:ia-halo 3.5s ease-in-out infinite;}
+
+/* Messages : apparition en glissé + halo néon pour l'assistant */
+[data-testid="stChatMessage"] {animation:ia-entree .45s ease-out;border-radius:14px;}
+[data-testid="stChatMessage"]:has([data-testid="stChatMessageAvatarAssistant"]) {
+  animation:ia-entree .45s ease-out, ia-halo 4s ease-in-out infinite;}
+[data-testid="stChatMessageAvatarAssistant"] {box-shadow:0 0 14px rgba(124,58,237,.7);}
+
+/* Boutons : lueur au survol */
+.stButton>button, .stFormSubmitButton>button, .stDownloadButton>button {transition:all .25s;}
+.stButton>button:hover, .stFormSubmitButton>button:hover, .stDownloadButton>button:hover {
+  box-shadow:0 0 0 1px #7c3aed,0 0 18px rgba(124,58,237,.55);transform:translateY(-1px);}
+
+/* Barre latérale : liseré néon */
+[data-testid="stSidebar"] {border-right:1px solid rgba(124,58,237,.35);box-shadow:4px 0 22px rgba(99,102,241,.15);}
+
+/* Indicateur de réflexion (spinner) : texte avec reflet qui défile */
+[data-testid="stSpinner"] {background:linear-gradient(90deg,currentColor 35%,#7c3aed 50%,currentColor 65%);
+  background-size:200% 100%;-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;
+  animation:ia-reflet 2s linear infinite;}
+
+@media (prefers-reduced-motion: reduce){
+  .stApp h1,.badge-ia .point,[data-testid="stChatInput"],[data-testid="stSpinner"],[data-testid="stChatMessage"],
+  .stApp[data-teststate="running"]::before{animation:none !important;}
+}
+</style>
+"""
+
 # --- ÉCRAN DE CONNEXION ---
 if not st.session_state.authentifie:
+    if EFFETS_IA:
+        st.markdown(CSS_IA, unsafe_allow_html=True)
+        injecter_fond_ia()
     # Image de la page de connexion (même dossier que app.py ; tolère espaces/underscores et majuscules)
     _dossier = os.path.dirname(os.path.abspath(__file__))
     _image_garde = None
@@ -1450,98 +1658,18 @@ if st.session_state.get("erreur_historique"):
 lancer_synchro_auto()
 
 
-# ==========================================
-# EFFETS « IA » (animation d'accueil + style permanent)
-# ==========================================
-def animation_accueil_ia(nom: str):
-    """Réseau de neurones animé + texte qui s'écrit, affiché ~3 s juste après la connexion."""
-    texte = json.dumps(f"Bienvenue, {nom}")
-    html_anim = """
-<div style="position:relative;width:100%;height:260px;border-radius:16px;overflow:hidden;
-            background:radial-gradient(circle at 30% 20%,#12307a 0%,#0a1633 55%,#050a1a 100%);">
-  <canvas id="c" style="position:absolute;inset:0;width:100%;height:100%"></canvas>
-  <div style="position:absolute;inset:0;display:flex;flex-direction:column;align-items:center;justify-content:center;
-              font-family:'Source Sans Pro',Segoe UI,Arial,sans-serif;color:#e8f0ff;text-align:center;">
-    <div id="l1" style="font-size:13px;letter-spacing:3px;color:#6ee7ff;text-transform:uppercase;min-height:18px"></div>
-    <div id="l2" style="font-size:30px;font-weight:700;margin-top:8px;min-height:40px;
-                        text-shadow:0 0 18px rgba(110,231,255,.55)"></div>
-  </div>
-</div>
-<script>
-const cv=document.getElementById('c'),ctx=cv.getContext('2d');
-const reduit=window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-function taille(){cv.width=cv.clientWidth*devicePixelRatio;cv.height=cv.clientHeight*devicePixelRatio;}
-taille();
-const W=()=>cv.width,H=()=>cv.height,N=48;
-const pts=Array.from({length:N},()=>({x:Math.random()*W(),y:Math.random()*H(),
-  vx:(Math.random()-.5)*.8*devicePixelRatio,vy:(Math.random()-.5)*.8*devicePixelRatio,r:(1.2+Math.random()*1.8)*devicePixelRatio}));
-let t=0;
-function boucle(){
-  ctx.clearRect(0,0,W(),H());t+=.02;
-  for(const p of pts){ if(!reduit){p.x+=p.vx;p.y+=p.vy;} if(p.x<0||p.x>W())p.vx*=-1; if(p.y<0||p.y>H())p.vy*=-1; }
-  const d=130*devicePixelRatio;
-  for(let i=0;i<N;i++)for(let j=i+1;j<N;j++){
-    const dx=pts[i].x-pts[j].x,dy=pts[i].y-pts[j].y,dist=Math.hypot(dx,dy);
-    if(dist<d){ctx.strokeStyle='rgba(110,231,255,'+(0.35*(1-dist/d))+')';ctx.lineWidth=devicePixelRatio;
-      ctx.beginPath();ctx.moveTo(pts[i].x,pts[i].y);ctx.lineTo(pts[j].x,pts[j].y);ctx.stroke();}
-  }
-  pts.forEach((p,i)=>{const a=.6+.4*Math.sin(t*3+i);ctx.fillStyle='rgba(140,200,255,'+a+')';
-    ctx.beginPath();ctx.arc(p.x,p.y,p.r,0,6.283);ctx.fill();});
-  requestAnimationFrame(boucle);
-}
-boucle();
-function ecrire(id,txt,delai,fin){let i=0;const el=document.getElementById(id);
-  const iv=setInterval(()=>{el.textContent=txt.slice(0,++i)+(i<txt.length?'▌':'');
-    if(i>=txt.length){clearInterval(iv);fin&&setTimeout(fin,150);}},delai);}
-ecrire('l1',"Initialisation de l'assistant IA...",28,()=>ecrire('l2',__TEXTE__,45));
-</script>
-""".replace("__TEXTE__", texte)
-    components.html(html_anim, height=270)
-
-
-CSS_IA = """
-<style>
-@keyframes ia-degrade {0%{background-position:0% 50%}50%{background-position:100% 50%}100%{background-position:0% 50%}}
-@keyframes ia-pouls  {0%,100%{box-shadow:0 0 0 0 rgba(34,197,94,.65)}70%{box-shadow:0 0 0 9px rgba(34,197,94,0)}}
-@keyframes ia-halo   {0%,100%{box-shadow:0 0 0 1px rgba(59,130,246,.35),0 0 10px rgba(59,130,246,.15)}
-                      50%{box-shadow:0 0 0 1px rgba(139,92,246,.7),0 0 20px rgba(139,92,246,.35)}}
-@keyframes ia-reflet {0%{background-position:-200% 0}100%{background-position:200% 0}}
-
-/* Titre principal : dégradé animé */
-.stApp h1 {background:linear-gradient(90deg,#1d4ed8,#7c3aed,#06b6d4,#1d4ed8);background-size:300% 100%;
-  -webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;
-  animation:ia-degrade 8s ease infinite;}
-
-/* Pastille « IA active » */
-.badge-ia {display:inline-flex;align-items:center;gap:8px;padding:4px 14px;border-radius:999px;font-size:.85rem;
-  font-weight:600;color:#0f172a;background:linear-gradient(90deg,#e0f2fe,#ede9fe);border:1px solid rgba(124,58,237,.35);}
-.badge-ia .point {width:9px;height:9px;border-radius:50%;background:#22c55e;animation:ia-pouls 1.8s infinite;}
-
-/* Zone de saisie : halo lumineux */
-[data-testid="stChatInput"] {border-radius:14px;animation:ia-halo 3.5s ease-in-out infinite;}
-
-/* Avatar de l'assistant */
-[data-testid="stChatMessageAvatarAssistant"] {box-shadow:0 0 12px rgba(124,58,237,.55);}
-
-/* Indicateur de réflexion (spinner) : texte avec reflet qui défile */
-[data-testid="stSpinner"] {background:linear-gradient(90deg,currentColor 35%,#7c3aed 50%,currentColor 65%);
-  background-size:200% 100%;-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;
-  animation:ia-reflet 2s linear infinite;}
-
-@media (prefers-reduced-motion: reduce){
-  .stApp h1,.badge-ia .point,[data-testid="stChatInput"],[data-testid="stSpinner"]{animation:none !important;}
-}
-</style>
-"""
-
 # --- Interface Principale ---
-if st.session_state.pop("anim_ia", False):
-    _zone_anim = st.empty()
-    with _zone_anim.container():
-        animation_accueil_ia(st.session_state.nom_utilisateur)
-    time.sleep(3.6)
-    _zone_anim.empty()
-st.markdown(CSS_IA, unsafe_allow_html=True)
+if EFFETS_IA:
+    if st.session_state.pop("anim_ia", False):
+        _zone_anim = st.empty()
+        with _zone_anim.container():
+            animation_accueil_ia(st.session_state.nom_utilisateur, nb_extraits())
+        time.sleep(4.6)
+        _zone_anim.empty()
+    st.markdown(CSS_IA, unsafe_allow_html=True)
+    injecter_fond_ia()
+else:
+    st.session_state.pop("anim_ia", None)
 st.title("📚 Recherche des normes et fascicules techniques — LPEE")
 st.markdown('<span class="badge-ia"><span class="point"></span>Assistant IA en ligne</span>', unsafe_allow_html=True)
 st.subheader(f"👋 Bonjour {st.session_state.nom_utilisateur}")
