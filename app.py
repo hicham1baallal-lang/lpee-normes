@@ -15,6 +15,7 @@ Secrets requis (Streamlit Cloud > Settings > Secrets, format .toml) :
 """
 
 import hashlib
+import html as _html
 import hmac
 import io
 import json
@@ -383,7 +384,98 @@ CSS_IA = """
   background-size:200% 100%;-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;
   animation:ia-reflet 2s linear infinite;}
 
+/* ================= BARRE LATÉRALE « IA » ================= */
+@keyframes ia-tourne  {to{transform:rotate(360deg)}}
+@keyframes ia-balaye  {0%{top:-30%}100%{top:130%}}
+@keyframes ia-lueur   {0%,100%{filter:drop-shadow(0 0 4px rgba(34,211,238,.35))}50%{filter:drop-shadow(0 0 14px rgba(124,58,237,.75))}}
+@keyframes ia-glisse  {from{opacity:0;transform:translateX(-18px)}to{opacity:1;transform:none}}
+@keyframes ia-aurore  {0%{background-position:0% 0%}50%{background-position:100% 100%}100%{background-position:0% 0%}}
+@keyframes ia-barres  {0%,100%{height:4px}50%{height:16px}}
+@keyframes ia-reflet2 {0%{transform:translateX(-120%) skewX(-20deg)}100%{transform:translateX(220%) skewX(-20deg)}}
+@keyframes ia-tirets  {to{background-position:200% 0}}
+
+/* Fond : grille « circuit » + aurore qui dérive lentement */
+[data-testid="stSidebar"] > div:first-child {
+  background-image:
+    linear-gradient(rgba(99,102,241,.07) 1px,transparent 1px),
+    linear-gradient(90deg,rgba(99,102,241,.07) 1px,transparent 1px),
+    radial-gradient(circle at 20% 0%,rgba(34,211,238,.20),transparent 45%),
+    radial-gradient(circle at 90% 100%,rgba(124,58,237,.20),transparent 50%);
+  background-size:26px 26px,26px 26px,200% 200%,200% 200%;
+  animation:ia-aurore 18s ease-in-out infinite;}
+
+/* Entrée en cascade des éléments */
+[data-testid="stSidebar"] [data-testid="stElementContainer"],
+[data-testid="stSidebar"] [data-testid="stExpander"] {animation:ia-glisse .55s ease-out both;}
+[data-testid="stSidebar"] [data-testid="stElementContainer"]:nth-child(2){animation-delay:.08s}
+[data-testid="stSidebar"] [data-testid="stElementContainer"]:nth-child(3){animation-delay:.16s}
+[data-testid="stSidebar"] [data-testid="stElementContainer"]:nth-child(4){animation-delay:.24s}
+[data-testid="stSidebar"] [data-testid="stElementContainer"]:nth-child(5){animation-delay:.32s}
+[data-testid="stSidebar"] [data-testid="stElementContainer"]:nth-child(6){animation-delay:.40s}
+[data-testid="stSidebar"] [data-testid="stElementContainer"]:nth-child(n+7){animation-delay:.48s}
+
+/* LOGO : cadre néon rotatif + balayage « scanner » + lueur pulsante */
+[data-testid="stSidebar"] [data-testid="stImage"] {
+  position:relative;overflow:hidden;border-radius:18px;padding:3px;isolation:isolate;
+  animation:ia-lueur 3.6s ease-in-out infinite;}
+[data-testid="stSidebar"] [data-testid="stImage"]::before {
+  content:"";position:absolute;left:50%;top:50%;width:230%;aspect-ratio:1;z-index:-1;
+  margin:-115% 0 0 -115%;
+  background:conic-gradient(from 0deg,#22d3ee,#7c3aed,#f472b6,transparent 55%,#22d3ee);
+  animation:ia-tourne 5s linear infinite;}
+[data-testid="stSidebar"] [data-testid="stImage"] img {
+  position:relative;z-index:1;display:block;border-radius:15px;background:#fff;}
+[data-testid="stSidebar"] [data-testid="stImage"]::after {
+  content:"";position:absolute;left:3px;right:3px;height:28%;z-index:2;pointer-events:none;border-radius:15px;
+  background:linear-gradient(180deg,transparent,rgba(34,211,238,.38),rgba(124,58,237,.18),transparent);
+  mix-blend-mode:multiply;animation:ia-balaye 3.2s ease-in-out infinite;}
+
+/* CARTE UTILISATEUR */
+.carte-ia {position:relative;display:flex;gap:12px;align-items:center;padding:12px 14px;margin:6px 0 4px;
+  border-radius:16px;overflow:hidden;
+  background:linear-gradient(135deg,rgba(14,165,233,.12),rgba(124,58,237,.14));
+  border:1px solid rgba(124,58,237,.35);box-shadow:0 0 18px rgba(99,102,241,.18);}
+.carte-ia::after {content:"";position:absolute;top:0;bottom:0;width:40%;
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.35),transparent);
+  animation:ia-reflet2 4.5s ease-in-out infinite;pointer-events:none;}
+.avatar-ia {position:relative;flex:none;width:46px;height:46px;border-radius:50%;display:flex;align-items:center;
+  justify-content:center;font-weight:800;color:#fff;font-size:1rem;
+  background:radial-gradient(circle at 30% 25%,#6366f1,#1d4ed8);box-shadow:0 0 14px rgba(99,102,241,.8);}
+.avatar-ia::before {content:"";position:absolute;inset:-5px;border-radius:50%;
+  border:2px solid transparent;border-top-color:#22d3ee;border-right-color:#a78bfa;animation:ia-tourne 2.2s linear infinite;}
+.avatar-ia::after {content:"";position:absolute;inset:-10px;border-radius:50%;
+  border:1px dashed rgba(124,58,237,.55);animation:ia-tourne 9s linear infinite reverse;}
+.infos-ia {min-width:0;flex:1}
+.etat-ia {display:flex;align-items:center;gap:6px;font-size:.68rem;letter-spacing:.4px;text-transform:uppercase;opacity:.8}
+.pt-ia {width:8px;height:8px;border-radius:50%;background:#22c55e;display:inline-block;animation:ia-pouls 1.8s infinite}
+.nom-ia {font-weight:700;font-size:.98rem;line-height:1.2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.eq-ia {display:flex;align-items:flex-end;gap:3px;height:18px;margin-top:5px}
+.eq-ia b {display:block;width:3px;height:4px;border-radius:2px;background:linear-gradient(#22d3ee,#7c3aed);
+  animation:ia-barres 1s ease-in-out infinite}
+.eq-ia b:nth-child(2){animation-delay:.12s}.eq-ia b:nth-child(3){animation-delay:.27s}
+.eq-ia b:nth-child(4){animation-delay:.05s}.eq-ia b:nth-child(5){animation-delay:.38s}
+.eq-ia b:nth-child(6){animation-delay:.2s}.eq-ia b:nth-child(7){animation-delay:.31s}
+.eq-ia em {font-style:normal;font-size:.68rem;margin-left:8px;opacity:.75;align-self:center;
+  background:linear-gradient(90deg,#0ea5e9,#7c3aed);-webkit-background-clip:text;background-clip:text;
+  -webkit-text-fill-color:transparent;font-weight:700}
+
+/* Boutons et menus de la barre latérale : scan au survol + liseré néon */
+[data-testid="stSidebar"] .stButton>button {position:relative;overflow:hidden;}
+[data-testid="stSidebar"] .stButton>button::after {content:"";position:absolute;top:0;bottom:0;width:45%;left:0;
+  transform:translateX(-120%) skewX(-20deg);background:linear-gradient(90deg,transparent,rgba(124,58,237,.28),transparent);}
+[data-testid="stSidebar"] .stButton>button:hover::after {animation:ia-reflet2 .8s ease-out;}
+[data-testid="stSidebar"] [data-testid="stExpander"] {border-radius:12px;transition:all .25s;}
+[data-testid="stSidebar"] [data-testid="stExpander"]:hover {
+  box-shadow:inset 3px 0 0 #7c3aed,0 0 16px rgba(99,102,241,.3);transform:translateX(2px);}
+
+/* Séparateurs : trait lumineux animé */
+[data-testid="stSidebar"] hr {border:none;height:2px;
+  background:linear-gradient(90deg,transparent,#22d3ee,#7c3aed,#f472b6,transparent);
+  background-size:200% 100%;animation:ia-tirets 3.5s linear infinite;}
+
 @media (prefers-reduced-motion: reduce){
+  [data-testid="stSidebar"] *,[data-testid="stSidebar"] *::before,[data-testid="stSidebar"] *::after,
+  .carte-ia *,.carte-ia::after,[data-testid="stSidebar"] > div:first-child{animation:none !important;}
   .stApp h1,.badge-ia .point,[data-testid="stChatInput"],[data-testid="stSpinner"],[data-testid="stChatMessage"],
   .stApp[data-teststate="running"]::before{animation:none !important;}
 }
@@ -1337,7 +1429,20 @@ with st.sidebar:
     elif os.path.exists("logo_lpee.jpg"):
         st.image("logo_lpee.jpg", use_container_width=True)
     
-    st.write(f"Connecté : **{st.session_state.nom_utilisateur}**")
+    if EFFETS_IA:
+        _nom_aff = str(st.session_state.nom_utilisateur or "")
+        _initiales = "".join(m[0] for m in _nom_aff.split()[:2]).upper() or "?"
+        st.markdown(
+            f'''<div class="carte-ia">
+  <div class="avatar-ia"><span>{_html.escape(_initiales)}</span></div>
+  <div class="infos-ia">
+    <div class="etat-ia"><i class="pt-ia"></i>Connecté · session sécurisée</div>
+    <div class="nom-ia">{_html.escape(_nom_aff)}</div>
+    <div class="eq-ia" title="Assistant IA actif"><b></b><b></b><b></b><b></b><b></b><b></b><b></b><em>IA active</em></div>
+  </div>
+</div>''', unsafe_allow_html=True)
+    else:
+        st.write(f"Connecté : **{st.session_state.nom_utilisateur}**")
     if st.button("🚪 Déconnexion", use_container_width=True):
         st.session_state.authentifie = False
         st.session_state.username_courant = ""
