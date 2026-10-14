@@ -803,19 +803,66 @@ SEUIL_TEXTE = 20          # moins de caractères sur une page => page scannée =
 TAILLE_LOT = 64
 
 
+# --- Nettoyage des « remplissages » (lignes de tirets, points de conduite des sommaires, bordures de tableaux) ---
+CARS_REMPLISSAGE = set("-_.=*·…•─━—–~")
+_RE_REPETITION = re.compile(r"([\-_.=*·…•─━—–~])\1{3,}")
+_RE_ESPACES = re.compile(r"(?:[.\-_·]\s){5,}[.\-_·]?")
+
+
+def nettoyer_remplissage(texte: str) -> str:
+    """« ................ » ou « ---------- » -> « ... » / « --- » ; « . . . . . . » -> « … »."""
+    if not texte:
+        return texte
+    texte = _RE_REPETITION.sub(lambda m: m.group(1) * 3, texte)
+    texte = _RE_ESPACES.sub(" … ", texte)
+    return re.sub(r"(?:[ \t]*(?:\.\.\.|…|---)[ \t]*\n){3,}", "…\n", texte)  # lignes entières de remplissage
+
+
+def filtrer_remplissage_flux(flux, max_rep: int = 3):
+    """Filtre le flux de la réponse : au plus 3 caractères de remplissage identiques d'affilée, et plus de
+    2 lignes de suite faites uniquement de remplissage (le modèle recopie parfois les tirets des tableaux)."""
+    dernier, rep = "", 0
+    ligne_len, ligne_remplie, nb_lignes = 0, True, 0
+    for morceau in flux:
+        sortie = []
+        for ch in morceau:
+            if ch == "\n":
+                if ligne_len > 0:
+                    nb_lignes = nb_lignes + 1 if ligne_remplie else 0
+                ignorer = ligne_len > 0 and ligne_remplie and nb_lignes > 2
+                ligne_len, ligne_remplie, dernier, rep = 0, True, "", 0
+                if not ignorer:
+                    sortie.append(ch)
+                continue
+            ligne_len += 1
+            if ch not in CARS_REMPLISSAGE and ch not in " |:\t":
+                ligne_remplie = False
+            elif nb_lignes >= 2 and ligne_remplie:
+                continue  # 3e ligne (ou plus) de remplissage d'affilée : on l'ignore
+            if ch in CARS_REMPLISSAGE and ch == dernier:
+                rep += 1
+                if rep > max_rep:
+                    continue
+            else:
+                dernier, rep = ch, 1
+            sortie.append(ch)
+        if sortie:
+            yield "".join(sortie)
+
+
 def _texte_page(page) -> str:
     """Texte d'une page PDF : couche texte si elle existe, sinon OCR Tesseract (français)."""
     texte = page.get_text("text").strip()
     if len(texte) >= SEUIL_TEXTE:
-        return texte
+        return nettoyer_remplissage(texte)
     try:
         import pytesseract
         from PIL import Image
         pix = page.get_pixmap(dpi=200)
         img = Image.open(io.BytesIO(pix.tobytes("png")))
-        return pytesseract.image_to_string(img, lang="fra").strip()
+        return nettoyer_remplissage(pytesseract.image_to_string(img, lang="fra").strip())
     except Exception:
-        return texte
+        return nettoyer_remplissage(texte)
 
 
 def _decouper(texte: str, taille=TAILLE_CHUNK, chevauchement=CHEVAUCHEMENT) -> list:
@@ -1450,7 +1497,7 @@ def rechercher_chunks(question: str, seulement_principales: bool = False):
 def construire_prompt(question: str, chunks: list, historique: list) -> str:
     contexte_docs = "\n\n---\n\n".join(
         f"[Source {i+1} — {'DOCUMENT DEMANDÉ' if c.get('cible') else 'NORME PRINCIPALE' if c.get('principale') else 'document complémentaire'} — "
-        f"{c['metadata'].get('fichier')}, page {c['metadata'].get('page')}]\n{c['content']}"
+        f"{c['metadata'].get('fichier')}, page {c['metadata'].get('page')}]\n{nettoyer_remplissage(c['content'])}"
         for i, c in enumerate(chunks)
     )
     derniers = historique[-NB_ECHANGES_CONTEXTE:]
@@ -1622,7 +1669,7 @@ def afficher_sources(chunks: list, prefixe_cle: str):
             meta = c["metadata"]
             etiquette = "⭐ Norme principale" if c.get("principale") else "Complémentaire"
             st.markdown(f"**Source {i} · {meta.get('fichier')}** — page {meta.get('page')} · {etiquette} (pertinence : {c['similarity']:.0%})")
-            st.caption(c["content"])
+            st.caption(nettoyer_remplissage(c["content"]))
             if peut_visualiser and meta.get("chemin"):
                 if st.button("👁️ Visualiser cette source", key=f"vis_src_{prefixe_cle}_{i}"):
                     ouvrir_visionneuse(prefixe_cle, meta["chemin"], meta.get("fichier"), meta.get("page"), c["content"])
@@ -2131,7 +2178,7 @@ if question:
             prompt = construire_prompt(question, chunks, historique[:-1])
             t1 = time.time()
             indicateur_ia(zone_ia, "L'IA rédige la réponse", f"{len(chunks)} extraits sélectionnés · analyse en cours")
-            reponse = st.write_stream(flux_avec_indicateur(flux_reponse(prompt), zone_ia))  # affichage progressif
+            reponse = st.write_stream(flux_avec_indicateur(filtrer_remplissage_flux(flux_reponse(prompt)), zone_ia))  # affichage progressif
             t_generation = time.time() - t1
             afficher_sources(chunks, prefixe_cle=f"{st.session_state.session_courante}_msg{len(historique)}")
             st.caption(f"⏱️ Recherche : {t_recherche:.1f} s · Génération de la réponse : {t_generation:.1f} s")
