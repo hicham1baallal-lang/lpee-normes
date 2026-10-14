@@ -1558,59 +1558,52 @@ def rendre_page_pdf(chemin: str, page: int, zoom: float, surligner: str = "") ->
         return pix.tobytes("png"), nb
 
 
-def _ouvrir_visu(cle: str, chemin: str, nom: str, page, extrait: str = ""):
-    try:
-        page = max(1, int(page or 1))
-    except (TypeError, ValueError):
-        page = 1
-    st.session_state[f"visu_{cle}"] = {"chemin": chemin, "nom": nom or chemin.split("/")[-1],
-                                       "extrait": " ".join((extrait or "").split())[:300], "page_extrait": page}
-    st.session_state[f"visu_page_{cle}"] = page
-
-
-def _fermer_visu(cle: str):
-    st.session_state.pop(f"visu_{cle}", None)
-    st.session_state.pop(f"visu_page_{cle}", None)
-
-
 def _aller_page(cle: str, delta: int):
     st.session_state[f"visu_page_{cle}"] = max(1, int(st.session_state.get(f"visu_page_{cle}", 1)) + delta)
 
 
-def afficher_visionneuse(cle: str):
-    etat = st.session_state.get(f"visu_{cle}")
-    if not etat:
-        return
-    page = max(1, int(st.session_state.get(f"visu_page_{cle}", 1)))
+def _entier(valeur, defaut: int = 1) -> int:
+    try:
+        return max(1, int(valeur))
+    except (TypeError, ValueError):
+        return defaut
+
+
+@st.dialog("👁️ Visualisation du document", width="large")
+def fenetre_visionneuse(chemin: str, nom: str, page_extrait: int, extrait: str, cle: str):
+    """Fenêtre pop-up : page du PDF en image, navigation, passage cité surligné, téléchargement."""
+    st.markdown(f"**📄 {nom}**")
+    page = _entier(st.session_state.get(f"visu_page_{cle}", page_extrait))
     hd = bool(st.session_state.get(f"visu_hd_{cle}", False))
-    with st.container(border=True):
-        st.markdown(f"**👁️ {etat['nom']}**")
-        try:
-            surligner = etat["extrait"] if page == etat["page_extrait"] else ""
-            png, nb = rendre_page_pdf(etat["chemin"], page, 2.6 if hd else 1.8, surligner)
-        except Exception as e:
-            st.error(f"Impossible d'afficher ce PDF : {e}")
-            st.button("✖ Fermer", key=f"visu_fermer_{cle}", on_click=_fermer_visu, args=(cle,))
-            return
-        st.session_state[f"visu_page_{cle}"] = max(1, min(nb, page))  # reste dans les limites du document
-        c_prec, c_num, c_suiv, c_hd, c_dl, c_fermer = st.columns([1.3, 1.1, 1.3, 1.6, 1.6, 1])
-        c_prec.button("◀ Précédente", key=f"visu_prec_{cle}", on_click=_aller_page, args=(cle, -1),
-                      disabled=page <= 1, use_container_width=True)
-        c_num.number_input("Page", min_value=1, max_value=nb, step=1, key=f"visu_page_{cle}",
-                           label_visibility="collapsed")
-        c_suiv.button("Suivante ▶", key=f"visu_suiv_{cle}", on_click=_aller_page, args=(cle, 1),
-                      disabled=page >= nb, use_container_width=True)
-        c_hd.checkbox("Haute définition", key=f"visu_hd_{cle}")
-        try:
-            c_dl.download_button("⬇️ Télécharger", data=telecharger_pdf(etat["chemin"]), file_name=etat["nom"],
-                                 mime="application/pdf", key=f"visu_dl_{cle}", use_container_width=True)
-        except Exception:
-            pass
-        c_fermer.button("✖ Fermer", key=f"visu_fermer_{cle}", on_click=_fermer_visu, args=(cle,),
-                        use_container_width=True)
-        st.caption(f"Page {max(1, min(nb, page))} / {nb}"
-                   + (" · passage cité surligné" if page == etat["page_extrait"] and etat["extrait"] else ""))
-        st.image(png, use_container_width=True)
+    try:
+        surligner = extrait if page == page_extrait else ""
+        png, nb = rendre_page_pdf(chemin, page, 2.6 if hd else 1.8, surligner)
+    except Exception as e:
+        st.error(f"Impossible d'afficher ce PDF : {e}")
+        return
+    st.session_state[f"visu_page_{cle}"] = max(1, min(nb, page))  # reste dans les limites du document
+    c_prec, c_num, c_suiv, c_hd, c_dl = st.columns([1.3, 1.1, 1.3, 1.6, 1.6])
+    c_prec.button("◀ Précédente", key=f"visu_prec_{cle}", on_click=_aller_page, args=(cle, -1),
+                  disabled=page <= 1, use_container_width=True)
+    c_num.number_input("Page", min_value=1, max_value=nb, step=1, key=f"visu_page_{cle}",
+                       label_visibility="collapsed")
+    c_suiv.button("Suivante ▶", key=f"visu_suiv_{cle}", on_click=_aller_page, args=(cle, 1),
+                  disabled=page >= nb, use_container_width=True)
+    c_hd.checkbox("Haute définition", key=f"visu_hd_{cle}")
+    try:
+        c_dl.download_button("⬇️ Télécharger", data=telecharger_pdf(chemin), file_name=nom,
+                             mime="application/pdf", key=f"visu_dl_{cle}", use_container_width=True)
+    except Exception:
+        pass
+    st.caption(f"Page {max(1, min(nb, page))} / {nb}"
+               + (" · passage cité surligné" if page == page_extrait and extrait else ""))
+    st.image(png, use_container_width=True)
+
+
+def ouvrir_visionneuse(cle: str, chemin: str, nom: str, page, extrait: str = ""):
+    page = _entier(page)
+    st.session_state[f"visu_page_{cle}"] = page
+    fenetre_visionneuse(chemin, nom or chemin.split("/")[-1], page, " ".join((extrait or "").split())[:300], cle)
 
 
 def afficher_sources(chunks: list, prefixe_cle: str):
@@ -1631,8 +1624,8 @@ def afficher_sources(chunks: list, prefixe_cle: str):
             st.markdown(f"**Source {i} · {meta.get('fichier')}** — page {meta.get('page')} · {etiquette} (pertinence : {c['similarity']:.0%})")
             st.caption(c["content"])
             if peut_visualiser and meta.get("chemin"):
-                st.button("👁️ Visualiser cette source", key=f"vis_src_{prefixe_cle}_{i}", on_click=_ouvrir_visu,
-                          args=(prefixe_cle, meta["chemin"], meta.get("fichier"), meta.get("page"), c["content"]))
+                if st.button("👁️ Visualiser cette source", key=f"vis_src_{prefixe_cle}_{i}"):
+                    ouvrir_visionneuse(prefixe_cle, meta["chemin"], meta.get("fichier"), meta.get("page"), c["content"])
             st.divider()
 
     if nb_retirees:
@@ -1640,8 +1633,6 @@ def afficher_sources(chunks: list, prefixe_cle: str):
 
     if not peut_visualiser:
         return
-
-    afficher_visionneuse(prefixe_cle)  # s'ouvre ici dès qu'on clique sur « Visualiser » (source ou document)
 
     fichiers_uniques = {}
     for c in chunks:
@@ -1657,9 +1648,10 @@ def afficher_sources(chunks: list, prefixe_cle: str):
             cle = f"{prefixe_cle}_{i}"
             c_nom, c_vis, c_dl = st.columns([5, 2, 2], vertical_alignment="center")
             c_nom.markdown(f"📄 {nom}")
-            c_vis.button("👁️ Visualiser", key=f"vis_dl_{cle}", on_click=_ouvrir_visu,
-                         args=(prefixe_cle, chemin, nom, 1, ""), use_container_width=True)
+            visualiser = c_vis.button("👁️ Visualiser", key=f"vis_dl_{cle}", use_container_width=True)
             preparer = c_dl.button("⬇️ Télécharger", key=f"prep_{cle}", use_container_width=True)
+            if visualiser:
+                ouvrir_visionneuse(prefixe_cle, chemin, nom, 1, "")
             if preparer:
                 try:
                     st.download_button(
@@ -1687,7 +1679,9 @@ if st.session_state.get("historique_charge_pour") != st.session_state.username_c
 historique = st.session_state.sessions[st.session_state.session_courante]
 
 # --- Barre latérale (Sidebar) ---
+VERSION_APP = "v2026.10.14-visionneuse"
 with st.sidebar:
+    st.caption(f"Version : {VERSION_APP}")
     if os.path.exists("logo lpee.jpg"):
         st.image("logo lpee.jpg", use_container_width=True)
     elif os.path.exists("logo_lpee.jpg"):
