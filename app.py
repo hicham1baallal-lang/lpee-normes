@@ -665,6 +665,11 @@ def reformuler_question(question: str, historique: list) -> str:
     """Rend la question autonome. Sautée quand ce n'est pas nécessaire (gain de 1 à 3 s)."""
     if not historique:
         return question
+    try:
+        if _fichiers_cibles(question):
+            return question  # la question nomme déjà un document : ne pas y mêler les sujets précédents
+    except Exception:
+        pass
     mots = question.split()
     debut = question.lower().lstrip().split(" ")[0]
     if len(mots) >= 8 and debut not in ("et", "pour", "aussi", "alors", "donc", "mais", "même"):
@@ -678,7 +683,9 @@ def reformuler_question(question: str, historique: list) -> str:
 
 Nouvelle question : "{question}"
 
-Reformule cette question en une question AUTONOME et COMPLÈTE (remplace "il", "ça", "et pour X"...).
+Reformule cette question en une question AUTONOME et COMPLÈTE (remplace "il", "ça", "et pour X"...) uniquement
+si elle dépend de la conversation. Si elle a déjà son propre sujet (titre de document, norme, thème nouveau),
+recopie-la TELLE QUELLE : n'y ajoute jamais un sujet de la conversation qu'elle ne mentionne pas.
 Réponds UNIQUEMENT par la question reformulée, sans guillemets ni commentaire."""
     try:
         resp = client.models.generate_content(
@@ -1192,8 +1199,8 @@ def _principales(question: str, generaux: list) -> list:
 # on retrouve le(s) PDF correspondant(s) par leur nom, et on prend leurs extraits les plus proches de la question.
 BONUS_CIBLE = 0.10
 MAX_FICHIERS_CIBLES = 4
-NB_EXTRAITS_CIBLES = 6
-NB_CIBLES_GARANTIS = 8   # extraits du document cité toujours transmis au modèle
+NB_EXTRAITS_CIBLES = 8
+NB_CIBLES_GARANTIS = 10  # extraits du document cité toujours transmis au modèle
 
 
 def _nettoyer_ref(texte: str) -> str:
@@ -1257,27 +1264,73 @@ def _fichiers_cibles(question: str) -> list:
     return classes[:MAX_FICHIERS_CIBLES]
 
 
+def _diversifier(lignes: list, max_par_page: int = 2, n: int = NB_EXTRAITS_CIBLES) -> list:
+    """Évite que tous les extraits viennent de la même page (ex. page de garde en double)."""
+    comptes, sortie = {}, []
+    for l in lignes:
+        page = l["metadata"].get("page")
+        if comptes.get(page, 0) >= max_par_page:
+            continue
+        comptes[page] = comptes.get(page, 0) + 1
+        sortie.append(l)
+        if len(sortie) >= n:
+            break
+    return sortie
+
+
+def _apercu_document(chemin: str, table: str, n: int = 10) -> list:
+    """Vue d'ensemble d'un document : sommaire éventuel, début, puis extraits répartis sur toutes les pages."""
+    r = (supabase.table(table).select("id,content,metadata").eq("fichier", chemin)
+         .order("chunk_id").limit(2000).execute())
+    lignes = r.data or []
+    if not lignes:
+        return []
+    choisis = [l for l in lignes if "sommaire" in (l["content"] or "").lower()
+               or "table des mati" in (l["content"] or "").lower()][:2]
+    choisis += lignes[:2]
+    reste = max(1, n - len(choisis))
+    pas = max(1, len(lignes) // reste)
+    choisis += lignes[pas // 2::pas][:reste]
+    vus, sortie = set(), []
+    for l in choisis:
+        if l["id"] in vus:
+            continue
+        vus.add(l["id"])
+        l["similarity"] = 0.80
+        sortie.append(l)
+    return sortie[:n]
+
+
 def _candidats_cibles(question: str) -> list:
     fichiers = _fichiers_cibles(question)
     st.session_state["diag_cibles"] = {}
     if not fichiers:
         return []
     table = st.secrets.get("SUPABASE_TABLE", "documents")
+    mots_q = _mots_utiles(question)
     sortie = []
     for chemin in fichiers:
         lignes = []
-        try:  # 1) extraits du fichier les plus proches de la question
-            res = _rpc("match_documents_prefixe", {
-                "query_embedding": _vecteur_question(question),
-                "match_count": NB_EXTRAITS_CIBLES,
-                "motif": chemin,
-            })
-            lignes = res.data or []
-        except Exception:
-            lignes = []
+        # La question ne fait que nommer le document -> on en donne un aperçu (objet, plan, contenu)
+        titre_seul = len(mots_q) >= 2 and mots_q <= _mots_utiles(chemin.split("/")[-1].rsplit(".", 1)[0])
+        if titre_seul:
+            try:
+                lignes = _apercu_document(chemin, table)
+            except Exception:
+                lignes = []
         if not lignes:
-            try:  # 2) repli : premières pages du fichier (portée, définitions)
-                r = (supabase.table(table).select("content,metadata")
+            try:  # extraits du fichier les plus proches de la question
+                res = _rpc("match_documents_prefixe", {
+                    "query_embedding": _vecteur_question(question),
+                    "match_count": NB_EXTRAITS_CIBLES * 2,
+                    "motif": chemin,
+                })
+                lignes = _diversifier(res.data or [])
+            except Exception:
+                lignes = []
+        if not lignes:
+            try:  # repli : premières pages du fichier (portée, définitions)
+                r = (supabase.table(table).select("id,content,metadata")
                      .eq("fichier", chemin).limit(40).execute())  # colonne « fichier » = chemin complet, déjà indexée
                 lignes = sorted(r.data or [], key=lambda l: (l["metadata"].get("page") or 0))[:NB_EXTRAITS_CIBLES]
                 for l in lignes:
@@ -1402,7 +1455,8 @@ def construire_prompt(question: str, chunks: list, historique: list) -> str:
     )
     derniers = historique[-NB_ECHANGES_CONTEXTE:]
     fil = "\n".join(f"{'Agent' if h['role'] == 'user' else 'Assistant'} : {h['content'][:600]}" for h in derniers)
-    bloc_historique = f"\nContexte de la conversation :\n{fil}\n" if derniers else ""
+    bloc_historique = (f"\nContexte de la conversation (sert uniquement à comprendre les renvois comme « et pour... » ; "
+                       f"n'en reprends pas les sujets si la question est autonome) :\n{fil}\n") if derniers else ""
 
     return f"""Tu es un assistant technique pour les agents du LPEE (laboratoire d'essais de matériaux et travaux publics).
 
@@ -1419,7 +1473,10 @@ RÈGLES DE PRÉCISION (impératives) :
    N'utilise un « document complémentaire » que pour compléter, et précise-le (« d'après un document complémentaire »).
    En cas de divergence, la norme principale prévaut ; signale l'écart. Si aucun extrait de norme principale
    ne traite la question, dis-le dans ta première phrase.
-7. Termine par une section « Points non couverts » listant ce que les extraits ne permettent pas de confirmer.
+7. Si la question se limite au nom ou au numéro d'un document, présente ce document d'après les extraits
+   « DOCUMENT DEMANDÉ » : émetteur, édition ou date, objet, domaine d'application, plan et contenu (chapitres,
+   tableaux, catégories). N'ajoute aucun sujet des échanges précédents que la question ne mentionne pas.
+8. Termine par une section « Points non couverts » listant ce que les extraits ne permettent pas de confirmer.
    Ne devine jamais.
 
 FORMAT : commence directement par la réponse (pas d'introduction), puis sections courtes avec puces ;
