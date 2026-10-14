@@ -1210,20 +1210,50 @@ def _refs_dans_question(question: str) -> list:
     return refs
 
 
+MOTS_VIDES = {"de", "des", "du", "la", "le", "les", "un", "une", "et", "en", "pour", "sur", "au", "aux", "dans",
+              "par", "avec", "sans", "ou", "ce", "ces", "qui", "que", "quel", "quelle", "quels", "quelles", "est",
+              "sont", "pdf", "the", "of", "and"}
+
+
+def _mots_utiles(texte: str) -> set:
+    """Mots significatifs (sans accents, sans mots vides, pluriels simplifiés) : « chaussées » -> « chausse »."""
+    mots = set()
+    for m in _nettoyer_ref(texte).split():
+        if m in MOTS_VIDES or (len(m) <= 2 and not m.isdigit()):
+            continue
+        if len(m) > 3 and m.endswith(("s", "x")):
+            m = m[:-1]
+        mots.add(m)
+    return mots
+
+
 def _fichiers_cibles(question: str) -> list:
+    """PDF visés par la question : par numéro de norme (« 12350-2 ») ou par titre (« Catalogue des structures types »)."""
     existants = fichiers_pdf_existants()
-    refs = _refs_dans_question(question)
-    if not existants or not refs:
+    if not existants:
         return []
-    trouves = []
+    refs = _refs_dans_question(question)
+    mots_q = _mots_utiles(question)
+    notes = {}
     for chemin in sorted(existants):
-        nom = _nettoyer_ref(chemin.split("/")[-1].rsplit(".", 1)[0])
+        base = chemin.split("/")[-1].rsplit(".", 1)[0]
+        nom = _nettoyer_ref(base)
+        # 1) numéro de norme présent dans le nom du fichier
         for num, partie in refs:
             motif = f" {num} {partie} " if partie else f" {num} "
             if motif in nom:
-                trouves.append(chemin)
-                break
-    return trouves[:MAX_FICHIERS_CIBLES]
+                notes[chemin] = max(notes.get(chemin, 0), 2.0)
+        # 2) titre : presque tous les mots du nom du fichier figurent dans la question
+        mots_f = _mots_utiles(base)
+        if len(mots_f) >= 2 and mots_q:
+            couverture = len(mots_f & mots_q) / len(mots_f)
+            if couverture >= 0.8:
+                notes[chemin] = max(notes.get(chemin, 0), 1.0 + couverture)
+        # 3) la question reprend un morceau précis du nom (au moins 3 mots, tous présents dans le nom)
+        if len(mots_q) >= 3 and mots_q <= mots_f:
+            notes[chemin] = max(notes.get(chemin, 0), 1.5)
+    classes = sorted(notes, key=lambda c: (-notes[c], c))
+    return classes[:MAX_FICHIERS_CIBLES]
 
 
 def _candidats_cibles(question: str) -> list:
@@ -1306,7 +1336,7 @@ def rechercher_chunks(question: str, seulement_principales: bool = False):
 
 def construire_prompt(question: str, chunks: list, historique: list) -> str:
     contexte_docs = "\n\n---\n\n".join(
-        f"[Source {i+1} — {'NORME DEMANDÉE' if c.get('cible') else 'NORME PRINCIPALE' if c.get('principale') else 'document complémentaire'} — "
+        f"[Source {i+1} — {'DOCUMENT DEMANDÉ' if c.get('cible') else 'NORME PRINCIPALE' if c.get('principale') else 'document complémentaire'} — "
         f"{c['metadata'].get('fichier')}, page {c['metadata'].get('page')}]\n{c['content']}"
         for i, c in enumerate(chunks)
     )
@@ -1324,7 +1354,7 @@ RÈGLES DE PRÉCISION (impératives) :
    Ne les arrondis pas, ne les convertis pas.
 4. Si des extraits se contredisent (versions/normes différentes), signale-le et cite chaque source.
 5. Cite chaque affirmation avec (Source X) — fichier et page.
-6. Les extraits « NORME DEMANDÉE » proviennent de la norme que l'agent cite par son numéro : traite-les en priorité.
+6. Les extraits « DOCUMENT DEMANDÉ » proviennent du document que l'agent cite par son numéro ou son titre : traite-les en priorité.
    PRIORITÉ AUX NORMES PRINCIPALES : les extraits « NORME PRINCIPALE » font référence. Appuie-toi d'abord sur eux.
    N'utilise un « document complémentaire » que pour compléter, et précise-le (« d'après un document complémentaire »).
    En cas de divergence, la norme principale prévaut ; signale l'écart. Si aucun extrait de norme principale
