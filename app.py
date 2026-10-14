@@ -1193,6 +1193,7 @@ def _principales(question: str, generaux: list) -> list:
 BONUS_CIBLE = 0.10
 MAX_FICHIERS_CIBLES = 4
 NB_EXTRAITS_CIBLES = 6
+NB_CIBLES_GARANTIS = 8   # extraits du document cité toujours transmis au modèle
 
 
 def _nettoyer_ref(texte: str) -> str:
@@ -1258,6 +1259,7 @@ def _fichiers_cibles(question: str) -> list:
 
 def _candidats_cibles(question: str) -> list:
     fichiers = _fichiers_cibles(question)
+    st.session_state["diag_cibles"] = {}
     if not fichiers:
         return []
     table = st.secrets.get("SUPABASE_TABLE", "documents")
@@ -1284,6 +1286,7 @@ def _candidats_cibles(question: str) -> list:
                 lignes = []
         for l in lignes:
             l["cible"] = True
+        st.session_state["diag_cibles"][chemin.split("/")[-1]] = len(lignes)
         sortie += lignes
     return sortie
 
@@ -1319,6 +1322,13 @@ def rechercher_chunks(question: str, seulement_principales: bool = False):
 
     meilleur = candidats[0]["score"]
     gardes, vus = [], set()
+    # Extraits du document cité par l'agent : gardés d'office, même si leur similarité est faible
+    # (PDF scanné, tableaux, titre peu présent dans le texte...)
+    for c in [c for c in candidats if c.get("cible")][:NB_CIBLES_GARANTIS]:
+        cle = (c["metadata"].get("fichier"), c["metadata"].get("page"), c["content"][:120])
+        if cle not in vus:
+            vus.add(cle)
+            gardes.append(c)
     for c in candidats:
         cle = (c["metadata"].get("fichier"), c["metadata"].get("page"), c["content"][:120])
         if cle in vus:
@@ -1894,6 +1904,11 @@ if question:
             indicateur_ia(zone_ia, "L'IA analyse les documents", "Recherche vectorielle dans les normes indexées")
             question_recherche = reformuler_question(question, historique[:-1])
             chunks = rechercher_chunks(question_recherche, seulement_principales)
+            for _nom, _n in (st.session_state.pop("diag_cibles", None) or {}).items():
+                if _n:
+                    st.caption(f"🎯 Document détecté d'après votre question : {_nom} — {_n} extrait(s) retrouvé(s)")
+                else:
+                    st.caption(f"⚠️ Document détecté ({_nom}) mais aucun extrait lisible en base : PDF scanné ou indexation incomplète ?")
         except Exception as e:
             zone_ia.empty()
             historique.pop()  # la question n'a pas reçu de réponse : on ne la garde pas dans l'historique
