@@ -1291,6 +1291,39 @@ def _candidats_cibles(question: str) -> list:
     return sortie
 
 
+# --- Recherche par mots-clés (complète la recherche vectorielle) ---
+# Les codes et sigles (TPL6, GNF1, GB3, BBSG, C25/30...) et les titres de documents sont mal captés par les
+# vecteurs. La recherche plein texte de Postgres (fonction SQL recherche_texte) les retrouve exactement.
+NB_LEXICAUX = 8
+MOTS_GENERIQUES = {"quelle", "quel", "quels", "quelles", "comment", "donne", "donnez", "selon", "dans", "avec",
+                   "tout", "tous", "plus", "cette", "cet", "ces", "sont", "etre", "avoir", "faire", "norme",
+                   "normes", "exigence", "exigences", "pour", "quoi", "pourquoi", "est", "les", "des", "une"}
+
+
+def _termes_lexicaux(question: str) -> str:
+    """Termes distinctifs de la question, au format « a | b | c » (uniquement a-z et 0-9, donc sans risque)."""
+    mots, vus = [], set()
+    for m in re.findall(r"[a-z0-9]+", _sans_accents(question)):
+        if len(m) < 3 or m in MOTS_VIDES or m in MOTS_GENERIQUES or m in vus:
+            continue
+        vus.add(m)
+        mots.append(m)
+    # les termes contenant un chiffre (codes) d'abord, puis les plus longs
+    mots.sort(key=lambda m: (not any(ch.isdigit() for ch in m), -len(m)))
+    return " | ".join(mots[:10])
+
+
+def _candidats_lexicaux(question: str) -> list:
+    termes = _termes_lexicaux(question)
+    if not termes:
+        return []
+    try:
+        res = _rpc("recherche_texte", {"termes": termes, "match_count": 12}, essais=1)
+        return res.data or []
+    except Exception:
+        return []  # fonction SQL pas encore créée ou indisponible : on continue avec la seule recherche vectorielle
+
+
 def rechercher_chunks(question: str, seulement_principales: bool = False):
     """Recherche vectorielle en deux niveaux : les normes principales sont cherchées à part (et favorisées),
     puis complétées par le reste de la base (sauf en mode « normes principales uniquement »).
@@ -1307,6 +1340,23 @@ def rechercher_chunks(question: str, seulement_principales: bool = False):
                       if (c["metadata"].get("fichier"), c["metadata"].get("page"), c["content"][:120]) not in deja]
 
     candidats = _candidats_cibles(question) + candidats  # norme citée par son numéro : toujours dans la course
+
+    # Recherche par mots-clés : fusionnée avec les résultats vectoriels
+    lexicaux = _candidats_lexicaux(question)
+    if lexicaux:
+        par_id = {c.get("id"): c for c in candidats if c.get("id") is not None}
+        base = max((c["similarity"] for c in candidats), default=0.8)
+        ajoutes = 0
+        for c in lexicaux:
+            if c.get("id") in par_id:
+                par_id[c["id"]]["similarity"] += 0.03   # trouvé par les deux méthodes : confiance accrue
+                continue
+            if ajoutes >= NB_LEXICAUX or (seulement_principales and not est_principale(c)):
+                continue
+            c["similarity"] = base - 0.02 - 0.004 * ajoutes
+            c["lexical"] = True
+            candidats.append(c)
+            ajoutes += 1
 
     existants = fichiers_pdf_existants()
     if existants and layout_coherent():
