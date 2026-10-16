@@ -803,19 +803,66 @@ SEUIL_TEXTE = 20          # moins de caractères sur une page => page scannée =
 TAILLE_LOT = 64
 
 
+# --- Nettoyage des « remplissages » (lignes de tirets, points de conduite des sommaires, bordures de tableaux) ---
+CARS_REMPLISSAGE = set("-_.=*·…•─━—–~")
+_RE_REPETITION = re.compile(r"([\-_.=*·…•─━—–~])\1{3,}")
+_RE_ESPACES = re.compile(r"(?:[.\-_·]\s){5,}[.\-_·]?")
+
+
+def nettoyer_remplissage(texte: str) -> str:
+    """« ................ » ou « ---------- » -> « ... » / « --- » ; « . . . . . . » -> « … »."""
+    if not texte:
+        return texte
+    texte = _RE_REPETITION.sub(lambda m: m.group(1) * 3, texte)
+    texte = _RE_ESPACES.sub(" … ", texte)
+    return re.sub(r"(?:[ \t]*(?:\.\.\.|…|---)[ \t]*\n){3,}", "…\n", texte)  # lignes entières de remplissage
+
+
+def filtrer_remplissage_flux(flux, max_rep: int = 3):
+    """Filtre le flux de la réponse : au plus 3 caractères de remplissage identiques d'affilée, et plus de
+    2 lignes de suite faites uniquement de remplissage (le modèle recopie parfois les tirets des tableaux)."""
+    dernier, rep = "", 0
+    ligne_len, ligne_remplie, nb_lignes = 0, True, 0
+    for morceau in flux:
+        sortie = []
+        for ch in morceau:
+            if ch == "\n":
+                if ligne_len > 0:
+                    nb_lignes = nb_lignes + 1 if ligne_remplie else 0
+                ignorer = ligne_len > 0 and ligne_remplie and nb_lignes > 2
+                ligne_len, ligne_remplie, dernier, rep = 0, True, "", 0
+                if not ignorer:
+                    sortie.append(ch)
+                continue
+            ligne_len += 1
+            if ch not in CARS_REMPLISSAGE and ch not in " |:\t":
+                ligne_remplie = False
+            elif nb_lignes >= 2 and ligne_remplie:
+                continue  # 3e ligne (ou plus) de remplissage d'affilée : on l'ignore
+            if ch in CARS_REMPLISSAGE and ch == dernier:
+                rep += 1
+                if rep > max_rep:
+                    continue
+            else:
+                dernier, rep = ch, 1
+            sortie.append(ch)
+        if sortie:
+            yield "".join(sortie)
+
+
 def _texte_page(page) -> str:
     """Texte d'une page PDF : couche texte si elle existe, sinon OCR Tesseract (français)."""
     texte = page.get_text("text").strip()
     if len(texte) >= SEUIL_TEXTE:
-        return texte
+        return nettoyer_remplissage(texte)
     try:
         import pytesseract
         from PIL import Image
         pix = page.get_pixmap(dpi=200)
         img = Image.open(io.BytesIO(pix.tobytes("png")))
-        return pytesseract.image_to_string(img, lang="fra").strip()
+        return nettoyer_remplissage(pytesseract.image_to_string(img, lang="fra").strip())
     except Exception:
-        return texte
+        return nettoyer_remplissage(texte)
 
 
 def _decouper(texte: str, taille=TAILLE_CHUNK, chevauchement=CHEVAUCHEMENT) -> list:
